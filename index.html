@@ -1,1 +1,111 @@
 
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DDNS Updater</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            margin: 0;
+            padding: 0;
+        }
+        .container {
+            padding: 20px;
+        }
+        .label {
+            font-size: 24px;
+            margin-bottom: 20px;
+        }
+        .status {
+            font-size: 14px;
+            margin-top: 10px;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            margin: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="label">Bastet Broadband DDNS Updater</div>
+        <div class="status" id="statusLabel"></div>
+        <button id="startBtn" onclick="startUpdating()">Start Updating</button>
+        <button id="stopBtn" onclick="stopUpdating()" disabled>Stop Updating</button>
+    </div>
+
+    <script>
+        const DDNS_SERVER = "http://192.168.1.229:5000";  // Replace with the actual server IP
+        const HOSTNAME = window.location.hostname;  // Use the browser's hostname
+
+        let updating = false;
+        let lastIp = null;
+
+        function updateStatus(message) {
+            document.getElementById('statusLabel').innerText = message;
+        }
+
+        async function getExternalIP() {
+            try {
+                const response = await fetch('https://api.ipify.org?format=json');
+                const data = await response.json();
+                return data.ip;
+            } catch (error) {
+                updateStatus(`Error getting external IP: ${error}`);
+                return null;
+            }
+        }
+
+        async function updateDDNS(ip) {
+            try {
+                const response = await fetch(`${DDNS_SERVER}/update`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ hostname: HOSTNAME, ip: ip })
+                });
+
+                if (response.status === 200) {
+                    updateStatus(`IP updated successfully to ${ip}`);
+                } else {
+                    updateStatus(`Failed to update IP: ${response.status}`);
+                }
+            } catch (error) {
+                updateStatus(`Error updating DDNS server: ${error}`);
+            }
+        }
+
+        async function updateLoop() {
+            if (updating) {
+                const currentIp = await getExternalIP();
+                if (currentIp && currentIp !== lastIp) {
+                    await updateDDNS(currentIp);
+                    lastIp = currentIp;
+                }
+                setTimeout(updateLoop, 300000);  // Check every 5 minutes (300,000ms)
+            }
+        }
+
+        function startUpdating() {
+            updating = true;
+            updateStatus("Updating started...");
+            document.getElementById('startBtn').disabled = true;
+            document.getElementById('stopBtn').disabled = false;
+            updateLoop();  // Start the update loop
+        }
+
+        function stopUpdating() {
+            updating = false;
+            updateStatus("Updating stopped.");
+            document.getElementById('startBtn').disabled = false;
+            document.getElementById('stopBtn').disabled = true;
+        }
+    </script>
+</body>
+</html>
+
