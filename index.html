@@ -3,132 +3,187 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DDNS Updater</title>
+    <title>WebRTC Phone</title>
     <style>
         body {
-            background-color: #1e1e1e; /* Dark background */
-            color: #00ff00; /* Neon green text */
-            font-family: 'Courier New', Courier, monospace; /* Monospace font for terminal look */
+            font-family: Arial, sans-serif;
             text-align: center;
-            margin: 0;
-            padding: 0;
+            padding: 20px;
         }
-        .container {
-            padding: 50px;
-            border: 2px solid #00ff00; /* Neon green border */
-            box-shadow: 0 0 10px #00ff00; /* Neon glow */
-            max-width: 400px;
-            margin: auto;
-            background-color: #2a2a2a; /* Slightly lighter dark background */
-            border-radius: 10px; /* Rounded corners */
+        #phone-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
         }
-        .label {
-            font-size: 28px; /* Slightly larger font */
-            margin-bottom: 30px;
+        #keypad {
+            display: grid;
+            grid-template-columns: repeat(3, 60px);
+            gap: 10px;
+            margin: 20px 0;
         }
-        .status {
-            font-size: 14px;
+        .key {
+            width: 60px;
+            height: 60px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background-color: #007bff;
+            color: white;
+            font-size: 24px;
+            font-weight: bold;
+            border-radius: 50%;
+            cursor: pointer;
+        }
+        #call-logs {
             margin-top: 20px;
-            padding: 10px;
-            border: 1px solid #00ff00; /* Status box border */
-            background-color: #3a3a3a; /* Darker background for status */
-            border-radius: 5px; /* Rounded corners */
+            width: 100%;
+            max-width: 300px;
+            text-align: left;
         }
-        button {
-            background-color: #00ff00; /* Neon green button */
-            color: #1e1e1e; /* Dark text color */
-            padding: 12px 25px;
+        #call-logs h3 {
+            text-align: center;
+        }
+        .log {
+            border: 1px solid #ddd;
+            padding: 10px;
+            margin-bottom: 5px;
+            border-radius: 5px;
+            background: #f9f9f9;
+        }
+        #call-buttons {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+        }
+        .call-button {
+            padding: 10px 20px;
             font-size: 16px;
-            margin: 15px;
+            color: white;
             border: none;
             border-radius: 5px;
             cursor: pointer;
-            transition: background-color 0.3s;
         }
-        button:hover {
-            background-color: #33cc33; /* Lighter green on hover */
+        .call-button.call {
+            background-color: green;
         }
-        button:disabled {
-            background-color: #666; /* Greyed out disabled button */
-            cursor: not-allowed;
+        .call-button.end {
+            background-color: red;
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="label">Bastet Broadband DDNS Updater</div>
-        <div class="status" id="statusLabel">Awaiting command...</div>
-        <button id="startBtn" onclick="startUpdating()">Start Updating</button>
-        <button id="stopBtn" onclick="stopUpdating()" disabled>Stop Updating</button>
+    <div id="phone-container">
+        <h1>WebRTC Phone</h1>
+        <div id="keypad">
+            <div class="key">1</div>
+            <div class="key">2</div>
+            <div class="key">3</div>
+            <div class="key">4</div>
+            <div class="key">5</div>
+            <div class="key">6</div>
+            <div class="key">7</div>
+            <div class="key">8</div>
+            <div class="key">9</div>
+            <div class="key">*</div>
+            <div class="key">0</div>
+            <div class="key">#</div>
+        </div>
+        <div id="call-buttons">
+            <button class="call-button call" id="startCall">Call</button>
+            <button class="call-button end" id="endCall">End</button>
+        </div>
+        <div id="call-logs">
+            <h3>Call Logs</h3>
+            <div id="logs"></div>
+        </div>
     </div>
-
+    <audio id="ringtone" src="w.mp3" loop></audio>
+    <audio id="callTone" src="call-tone.mp3"></audio>
     <script>
-        const DDNS_SERVER = "http://192.168.1.229:5000";  // Replace with the actual server IP
-        const HOSTNAME = window.location.hostname;  // Use the browser's hostname
+        const signalingServer = new WebSocket('ws://localhost:8088');
+        const ringtone = document.getElementById('ringtone');
+        const callTone = document.getElementById('callTone');
+        const logsContainer = document.getElementById('logs');
+        let peerConnection;
+        let localStream;
 
-        let updating = false;
-        let lastIp = null;
+        // Helper to log call activity
+        const logCall = (message) => {
+            const logEntry = document.createElement('div');
+            logEntry.classList.add('log');
+            logEntry.innerText = message;
+            logsContainer.prepend(logEntry);
+        };
 
-        function updateStatus(message) {
-            document.getElementById('statusLabel').innerText = message;
-        }
+        signalingServer.onopen = () => {
+            signalingServer.send(JSON.stringify({ type: 'register', id: 'user1' }));
+        };
 
-        async function getExternalIP() {
-            try {
-                const response = await fetch('https://api.ipify.org?format=json');
-                const data = await response.json();
-                return data.ip;
-            } catch (error) {
-                updateStatus(`Error getting external IP: ${error}`);
-                return null;
-            }
-        }
+        signalingServer.onmessage = async (message) => {
+            const data = JSON.parse(message.data);
 
-        async function updateDDNS(ip) {
-            try {
-                const response = await fetch(`${DDNS_SERVER}/update`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ hostname: HOSTNAME, ip: ip })
-                });
-
-                if (response.status === 200) {
-                    updateStatus(`IP updated successfully to ${ip}`);
+            if (data.type === 'offer') {
+                // Play ringtone
+                ringtone.play();
+                const acceptCall = confirm(`Incoming call from ${data.sender}. Accept?`);
+                if (acceptCall) {
+                    ringtone.pause();
+                    ringtone.currentTime = 0;
+                    peerConnection = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+                    localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    localStream.getTracks().forEach((track) => peerConnection.addTrack(track, localStream));
+                    await peerConnection.setRemoteDescription(new RTCSessionDescription(data));
+                    const answer = await peerConnection.createAnswer();
+                    await peerConnection.setLocalDescription(answer);
+                    signalingServer.send(JSON.stringify({ type: 'answer', recipient: data.sender, sdp: peerConnection.localDescription }));
+                    logCall(`Call accepted from ${data.sender}`);
                 } else {
-                    updateStatus(`Failed to update IP: ${response.status}`);
+                    ringtone.pause();
+                    ringtone.currentTime = 0;
+                    logCall(`Call rejected from ${data.sender}`);
                 }
-            } catch (error) {
-                updateStatus(`Error updating DDNS server: ${error}`);
+            } else if (data.type === 'candidate') {
+                await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
             }
-        }
+        };
 
-        async function updateLoop() {
-            if (updating) {
-                const currentIp = await getExternalIP();
-                if (currentIp && currentIp !== lastIp) {
-                    await updateDDNS(currentIp);
-                    lastIp = currentIp;
+        const startCall = async () => {
+            const recipient = prompt('Enter recipient ID:');
+            if (!recipient) return;
+            localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+            peerConnection = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+            localStream.getTracks().forEach((track) => peerConnection.addTrack(track, localStream));
+
+            peerConnection.onicecandidate = (event) => {
+                if (event.candidate) {
+                    signalingServer.send(JSON.stringify({ type: 'candidate', candidate: event.candidate, recipient }));
                 }
-                setTimeout(updateLoop, 300000);  // Check every 5 minutes (300,000ms)
+            };
+
+            callTone.play();
+            const offer = await peerConnection.createOffer();
+            await peerConnection.setLocalDescription(offer);
+            signalingServer.send(JSON.stringify({ type: 'offer', recipient, sender: 'user1', sdp: offer }));
+            callTone.pause();
+            callTone.currentTime = 0;
+            logCall(`Outgoing call to ${recipient}`);
+        };
+
+        const endCall = () => {
+            if (peerConnection) {
+                peerConnection.close();
+                peerConnection = null;
             }
-        }
+            ringtone.pause();
+            ringtone.currentTime = 0;
+            callTone.pause();
+            callTone.currentTime = 0;
+            logCall('Call ended');
+        };
 
-        function startUpdating() {
-            updating = true;
-            updateStatus("Updating started...");
-            document.getElementById('startBtn').disabled = true;
-            document.getElementById('stopBtn').disabled = false;
-            updateLoop();  // Start the update loop
-        }
-
-        function stopUpdating() {
-            updating = false;
-            updateStatus("Updating stopped.");
-            document.getElementById('startBtn').disabled = false;
-            document.getElementById('stopBtn').disabled = true;
-        }
+        document.getElementById('startCall').addEventListener('click', startCall);
+        document.getElementById('endCall').addEventListener('click', endCall);
     </script>
 </body>
 </html>
